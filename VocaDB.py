@@ -1,6 +1,6 @@
 # VocaDB.py
 # Addon implementation using VocaDB API
-# v1.0.1
+# v1.0.2
 
 import os
 import requests
@@ -14,7 +14,7 @@ class VocaDB(MetadataFetcher):
     description = "Fetch song and album metadata from VocaDB"
 
     BASE_URL = "https://vocadb.net/api/"
-    USER_AGENT = "metadata-docker-vocadb-addon/1.0.1"
+    USER_AGENT = "metadata-docker-vocadb-addon/1.0.2"
 
     required_env_vars = ["MD_VOCADB_LANG", "MD_VOCADB_LYRICS_LANG", "MD_VOCADB_SONG_USE_ORIGINAL",
                         "MD_VOCADB_ARTIST_USE_ORIGINAL", "MD_VOCADB_ALBUM_USE_ORIGINAL", "MD_VOCADB_VOCALIST_USE_ORIGINAL",
@@ -83,10 +83,50 @@ class VocaDB(MetadataFetcher):
         return self._get_name(song_data, self.SONG_USE_ORIGINAL)
 
     def _get_vocalist_name(self, artist_data: Dict) -> str:
-        name = self._get_name(artist_data, self.VOCALIST_USE_ORIGINAL)
-        return name
+        return self._get_name(artist_data, self.VOCALIST_USE_ORIGINAL)
 
-    # ---------- Artist categorisation ----------
+    # ---------- Artist detection for albums ----------
+    def _get_album_main_artist(self, album_data: Dict) -> str:
+        """Return the Producer (or first artist) as the main artist."""
+        artists = album_data.get('artists', [])
+        artist_obj = album_data.get('artist')
+
+        # First, look for a Producer in the artists list
+        for art in artists:
+            art_type = art.get('artistType')
+            if not art_type:
+                categories = art.get('categories')
+                if isinstance(categories, list):
+                    if "Producer" in categories:
+                        art_type = "Producer"
+                elif isinstance(categories, str) and categories == "Producer":
+                    art_type = "Producer"
+            if art_type == 'Producer':
+                return self._get_artist_name(art)
+
+        # If no Producer, use the 'artist' object if present
+        if artist_obj:
+            return self._get_artist_name(artist_obj)
+
+        # If still nothing, use the first artist or artistString
+        if artists:
+            return self._get_artist_name(artists[0])
+
+        return album_data.get('artistString', 'Unknown Artist')
+
+    def _get_album_label(self, album_data: Dict) -> Optional[str]:
+        """Return the label artist if present (categories contains 'Label')."""
+        artists = album_data.get('artists', [])
+        for art in artists:
+            categories = art.get('categories')
+            if isinstance(categories, list):
+                if "Label" in categories:
+                    return self._get_artist_name(art)
+            elif isinstance(categories, str) and categories == "Label":
+                return self._get_artist_name(art)
+        return None
+
+    # ---------- Artist categorisation for songs ----------
     def _categorise_artists(self, artists: List[Dict]) -> Dict[str, List[str]]:
         result = {
             'main': [],
@@ -110,8 +150,14 @@ class VocaDB(MetadataFetcher):
                         art_type = "Vocalist"
                     else:
                         art_type = categories[0] if categories else None
-                else:
-                    art_type = categories
+                elif isinstance(categories, str):
+                    if categories == "Producer":
+                        art_type = "Producer"
+                    elif categories == "Vocalist":
+                        art_type = "Vocalist"
+                    else:
+                        art_type = categories
+                # else leave as None
 
             if art_type == 'Producer':
                 producers.append(self._get_artist_name(art))
@@ -223,19 +269,13 @@ class VocaDB(MetadataFetcher):
 
         if album_data:
             track["album"] = self._get_album_name(album_data)
+            track['albumArtist'] = self._get_album_main_artist(album_data)
 
-            album_artist_obj = album_data.get('artist')
-            if album_artist_obj:
-                track['albumArtist'] = self._get_artist_name(album_artist_obj)
-            else:
-                album_artists = album_data.get('artists', [])
-                if album_artists:
-                    track['albumArtist'] = self._get_artist_name(album_artists[0])
-                else:
-                    if categorised['main']:
-                        track['albumArtist'] = categorised['main'][0]
-                    else:
-                        track['albumArtist'] = track.get('artist', 'Unknown Artist')
+            # Extract label if present
+            label = self._get_album_label(album_data)
+            if label:
+                track["label"] = label
+                track["vocadb_label"] = label
 
             release_event = album_data.get("releaseEvent")
             if release_event:
@@ -321,16 +361,13 @@ class VocaDB(MetadataFetcher):
             entry = {
                 "id": album.get("id"),
                 "title": self._get_album_name(album),
+                "artist": self._get_album_main_artist(album)
             }
-            album_artist_obj = album.get('artist')
-            if album_artist_obj:
-                entry["artist"] = self._get_artist_name(album_artist_obj)
-            else:
-                album_artists = album.get('artists', [])
-                if album_artists:
-                    entry["artist"] = self._get_artist_name(album_artists[0])
-                else:
-                    entry["artist"] = album.get('artistString', 'Unknown Artist')
+            # Optionally include label in search results
+            label = self._get_album_label(album)
+            if label:
+                entry["label"] = label
+                entry["vocadb_label"] = label
 
             release_event = album.get("releaseEvent")
             if release_event:
@@ -343,14 +380,14 @@ class VocaDB(MetadataFetcher):
             results.append(self._clean_dict(entry))
         return results[:limit]
 
-    def fetch_song_metadata(self, song_id: str) -> Dict[str, Any]:
+    def fetch_song_metadata(self, song_id: str, album_data: Dict = None) -> Dict[str, Any]:
         params = {
             "fields": "Artists,Albums,ReleaseEvent,MainPicture,Tags,Lyrics"
         }
         try:
             data = self._get(f"songs/{song_id}", params)
         except Exception as e:
-            raise
+            raise RuntimeError(f"Failed to fetch song {song_id}: {e}")
 
         if self.LYRICS_LANG != self.LANG:
             try:
@@ -358,11 +395,10 @@ class VocaDB(MetadataFetcher):
                 lyrics_data = self._get(f"songs/{song_id}", lyrics_params, lang_override=self.LYRICS_LANG)
                 if "lyrics" in lyrics_data:
                     data["lyrics"] = lyrics_data["lyrics"]
-            except Exception as e:
-                raise
+            except Exception:
+                pass
 
-        album_data = None
-        if data.get("albums"):
+        if album_data is None and data.get("albums"):
             first_album_entry = data["albums"][0]
             album_data = first_album_entry.get("album", first_album_entry)
 
@@ -382,7 +418,7 @@ class VocaDB(MetadataFetcher):
                 f"albums/{album_id}/tracks",
                 {"fields": "Artists,Tags"}
             )
-        except Exception as e:
+        except Exception:
             tracks_data = self._get(f"albums/{album_id}/tracks", {})
 
         tracks = []
@@ -391,16 +427,15 @@ class VocaDB(MetadataFetcher):
             if not song_data:
                 continue
 
-            if not song_data.get("artists") or not song_data.get("tags"):
-                song_id = song_data.get("id")
-                if not song_id:
-                    continue
-                try:
-                    track = self.fetch_song_metadata(song_id)
-                except Exception as e:
-                    continue
-            else:
-                track = self._build_track_metadata(song_data, album_data)
+            song_id = song_data.get("id")
+            if not song_id:
+                continue
+
+            try:
+                track = self.fetch_song_metadata(song_id, album_data=album_data)
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch full song {song_id}: {e}")
+                continue
 
             track_num = track_item.get("trackNumber")
             if track_num is not None:
