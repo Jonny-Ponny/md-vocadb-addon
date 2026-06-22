@@ -13,6 +13,7 @@ VocaDB supports multiple languages for names (song titles, artist names, album t
 | Variable | Purpose | Allowed Values | Default |
 |----------|---------|----------------|---------|
 | `MD_VOCADB_LANG` | Primary language for the API (`lang` parameter). Affects all `name` fields unless overridden by specific `*_USE_ORIGINAL` flags. | `Default`, `English`, `Romaji`, `Japanese` | `English` |
+| `MD_VOCADB_LYRICS_LANG` | Language for lyrics | `English`, `Romaji`, `Japanese`, `Default`| Value of `MD_VOCADB_LANG`|
 | `MD_VOCADB_SONG_USE_ORIGINAL` | If `true`, use the original (usually Japanese) title for songs instead of the localized name from `MD_VOCADB_LANG`. | `true`/`false` | `false` |
 | `MD_VOCADB_ARTIST_USE_ORIGINAL` | If `true`, use the original name for artists (producers, vocalists, etc.) instead of the localized name. | `true`/`false` | `false` |
 | `MD_VOCADB_ALBUM_USE_ORIGINAL` | If `true`, use the original name for albums instead of the localized name. | `true`/`false` | `false` |

@@ -1,5 +1,6 @@
 # VocaDB.py
 # Addon implementation using VocaDB API
+# v1.0.1
 
 import os
 import requests
@@ -13,12 +14,15 @@ class VocaDB(MetadataFetcher):
     description = "Fetch song and album metadata from VocaDB"
 
     BASE_URL = "https://vocadb.net/api/"
-    USER_AGENT = "metadata-docker-vocadb-addon/1.0.0"
+    USER_AGENT = "metadata-docker-vocadb-addon/1.0.1"
 
-    required_env_vars = ["MD_VOCADB_LANG", "MD_VOCADB_SONG_USE_ORIGINAL", "MD_VOCADB_ARTIST_USE_ORIGINAL", "MD_VOCADB_ALBUM_USE_ORIGINAL", "MD_VOCADB_VOCALIST_USE_ORIGINAL", "MD_VOCADB_FETCH_COVER", "MD_VOCADB_REQUEST_DELAY"]
+    required_env_vars = ["MD_VOCADB_LANG", "MD_VOCADB_LYRICS_LANG", "MD_VOCADB_SONG_USE_ORIGINAL",
+                        "MD_VOCADB_ARTIST_USE_ORIGINAL", "MD_VOCADB_ALBUM_USE_ORIGINAL", "MD_VOCADB_VOCALIST_USE_ORIGINAL",
+                        "MD_VOCADB_FETCH_COVER", "MD_VOCADB_REQUEST_DELAY"]  
 
-    # Environment variables (all optional with defaults)
+    # All have defaults
     LANG = os.getenv("MD_VOCADB_LANG", "English")
+    LYRICS_LANG = os.getenv("MD_VOCADB_LYRICS_LANG", LANG)
     SONG_USE_ORIGINAL = os.getenv("MD_VOCADB_SONG_USE_ORIGINAL", "false").lower() in ('true', '1', 'yes', 'on')
     ARTIST_USE_ORIGINAL = os.getenv("MD_VOCADB_ARTIST_USE_ORIGINAL", "false").lower() in ('true', '1', 'yes', 'on')
     ALBUM_USE_ORIGINAL = os.getenv("MD_VOCADB_ALBUM_USE_ORIGINAL", "false").lower() in ('true', '1', 'yes', 'on')
@@ -28,9 +32,7 @@ class VocaDB(MetadataFetcher):
 
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": self.USER_AGENT
-        })
+        self.session.headers.update({"User-Agent": self.USER_AGENT})
         self._last_request_time = 0.0
 
     def _rate_limit(self):
@@ -41,11 +43,13 @@ class VocaDB(MetadataFetcher):
                 time.sleep(self.REQUEST_DELAY - elapsed)
             self._last_request_time = time.time()
 
-    def _get(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _get(self, endpoint: str, params: Dict[str, Any], lang_override: Optional[str] = None) -> Dict[str, Any]:
         self._rate_limit()
         url = self.BASE_URL + endpoint
         params.setdefault("fmt", "json")
-        params["lang"] = self.LANG
+        lang = lang_override if lang_override is not None else self.LANG
+        params["lang"] = lang
+
         try:
             resp = self.session.get(url, params=params)
             resp.raise_for_status()
@@ -56,21 +60,17 @@ class VocaDB(MetadataFetcher):
     # ---------- Helpers for extracting names ----------
     def _get_name(self, entity: Dict, use_original: bool) -> str:
         if use_original:
-            # Try to get the original name (defaultName)
             original = entity.get("defaultName")
             if original and original.strip():
                 return original
-            # Fallback to localized name if original is missing
             localized = entity.get("name")
             if localized and localized.strip():
                 return localized
             return "Unknown"
         else:
-            # Prefer localized name
             localized = entity.get("name")
             if localized and localized.strip():
                 return localized
-            # Fallback to original name
             return entity.get("defaultName", "Unknown")
 
     def _get_artist_name(self, artist_data: Dict) -> str:
@@ -83,7 +83,8 @@ class VocaDB(MetadataFetcher):
         return self._get_name(song_data, self.SONG_USE_ORIGINAL)
 
     def _get_vocalist_name(self, artist_data: Dict) -> str:
-        return self._get_name(artist_data, self.VOCALIST_USE_ORIGINAL)
+        name = self._get_name(artist_data, self.VOCALIST_USE_ORIGINAL)
+        return name
 
     # ---------- Artist categorisation ----------
     def _categorise_artists(self, artists: List[Dict]) -> Dict[str, List[str]]:
@@ -99,15 +100,28 @@ class VocaDB(MetadataFetcher):
         vocalists = []
         others = {}
         for art in artists:
-            art_type = art.get('categories')
+            art_type = art.get('artistType')
+            if not art_type:
+                categories = art.get('categories')
+                if isinstance(categories, list):
+                    if "Producer" in categories:
+                        art_type = "Producer"
+                    elif "Vocalist" in categories:
+                        art_type = "Vocalist"
+                    else:
+                        art_type = categories[0] if categories else None
+                else:
+                    art_type = categories
+
             if art_type == 'Producer':
                 producers.append(self._get_artist_name(art))
             elif art_type == 'Vocalist':
                 vocalists.append(self._get_vocalist_name(art))
             else:
-                if art_type not in others:
-                    others[art_type] = []
-                others[art_type].append(self._get_artist_name(art))
+                key = art_type if art_type else 'other'
+                if key not in others:
+                    others[key] = []
+                others[key].append(self._get_artist_name(art))
 
         if producers:
             result['main'] = producers
@@ -117,7 +131,31 @@ class VocaDB(MetadataFetcher):
 
         result['vocalists'] = vocalists
         result['others'] = others
+
         return result
+
+    def _extract_lyrics(self, lyrics_list: List[Dict]) -> Optional[str]:
+        if not lyrics_list:
+            return None
+
+        # Map our language names to VocaDB translationType strings
+        lang_map = {
+            'English': 'Translation',
+            'Romaji': 'Romanized',
+            'Japanese': 'Original',
+            'Default': 'Original'
+        }
+        target_type = lang_map.get(self.LYRICS_LANG, 'Original')
+
+        # Try to find the target type
+        for lyric in lyrics_list:
+            if lyric.get('translationType') == target_type:
+                return lyric.get('value')
+        # Fallback: return the first available lyrics (usually Original)
+        for lyric in lyrics_list:
+            if lyric.get('value'):
+                return lyric.get('value')
+        return None
 
     # ---------- Other helpers ----------
     @staticmethod
@@ -131,25 +169,16 @@ class VocaDB(MetadataFetcher):
         return None
 
     def _format_genres(self, tags: List[Dict]) -> str:
-        """Extract tags with category 'Genre' or 'Genres' (case‑insensitive)."""
         if not tags:
             return ""
         genre_names = []
         for tag in tags:
-            # Sometimes the tag is nested under 'tag' key
             tag_obj = tag.get("tag", tag)
-            # Get category from either 'categoryName' or 'category'
             category = tag_obj.get("categoryName") or tag.get("categoryName") or tag_obj.get("category") or tag.get("category")
-            # Check if category is genre-like (case-insensitive)
             if category and category.lower() in ("genre", "genres"):
                 name = tag_obj.get("name") or tag.get("name")
                 if name:
                     genre_names.append(name.title())
-        # If no genre tags found, fallback to any tag that isn't obviously non-genre
-        if not genre_names:
-            # Optionally: collect tags that are not in a blacklist
-            # (but we'll just return empty to avoid false positives)
-            pass
         return "; ".join(genre_names)
 
     def _get_cover_url(self, entity: Dict) -> Optional[str]:
@@ -183,8 +212,14 @@ class VocaDB(MetadataFetcher):
 
         for art_type, names in categorised['others'].items():
             if names:
-                field_name = f"vocadb_{art_type.lower()}"
-                track[field_name] = "; ".join(names)
+                if art_type and art_type != 'other':
+                    field_name = f"vocadb_{art_type.lower()}"
+                    track[field_name] = "; ".join(names)
+                else:
+                    if "vocadb_other" in track:
+                        track["vocadb_other"] += "; " + "; ".join(names)
+                    else:
+                        track["vocadb_other"] = "; ".join(names)
 
         if album_data:
             track["album"] = self._get_album_name(album_data)
@@ -225,6 +260,13 @@ class VocaDB(MetadataFetcher):
 
         tags = song_data.get("tags", [])
         track["genre"] = self._format_genres(tags)
+
+        if "lyrics" in song_data:
+            lyrics_list = song_data.get("lyrics")
+            if isinstance(lyrics_list, list):
+                track["unsyncedLyrics"] = self._extract_lyrics(lyrics_list)
+            elif isinstance(lyrics_list, str):
+                track["unsyncedLyrics"] = lyrics_list
 
         for key in ["artistType", "publishDate", "releaseDate", "version", "status", "ratingScore", "favoritedTimes"]:
             if key in song_data:
@@ -303,9 +345,21 @@ class VocaDB(MetadataFetcher):
 
     def fetch_song_metadata(self, song_id: str) -> Dict[str, Any]:
         params = {
-            "fields": "Artists,Albums,ReleaseEvent,MainPicture,Tags"
+            "fields": "Artists,Albums,ReleaseEvent,MainPicture,Tags,Lyrics"
         }
-        data = self._get(f"songs/{song_id}", params)
+        try:
+            data = self._get(f"songs/{song_id}", params)
+        except Exception as e:
+            raise
+
+        if self.LYRICS_LANG != self.LANG:
+            try:
+                lyrics_params = {"fields": "Lyrics"}
+                lyrics_data = self._get(f"songs/{song_id}", lyrics_params, lang_override=self.LYRICS_LANG)
+                if "lyrics" in lyrics_data:
+                    data["lyrics"] = lyrics_data["lyrics"]
+            except Exception as e:
+                raise
 
         album_data = None
         if data.get("albums"):
@@ -320,17 +374,15 @@ class VocaDB(MetadataFetcher):
         return self._clean_dict(track)
 
     def fetch_album_metadata(self, album_id: str) -> List[Dict[str, Any]]:
-        # Get album metadata (cover, date, main artist)
         album_params = {"fields": "Artists,MainPicture,ReleaseEvent,Tags"}
         album_data = self._get(f"albums/{album_id}", album_params)
 
-        # Get tracks – try with fields first, fallback to no fields
         try:
             tracks_data = self._get(
                 f"albums/{album_id}/tracks",
                 {"fields": "Artists,Tags"}
             )
-        except Exception:
+        except Exception as e:
             tracks_data = self._get(f"albums/{album_id}/tracks", {})
 
         tracks = []
@@ -339,16 +391,17 @@ class VocaDB(MetadataFetcher):
             if not song_data:
                 continue
 
-            # If we have minimal data, fetch full song
             if not song_data.get("artists") or not song_data.get("tags"):
                 song_id = song_data.get("id")
                 if not song_id:
                     continue
-                track = self.fetch_song_metadata(song_id)
+                try:
+                    track = self.fetch_song_metadata(song_id)
+                except Exception as e:
+                    continue
             else:
                 track = self._build_track_metadata(song_data, album_data)
 
-            # Add track/disc numbers
             track_num = track_item.get("trackNumber")
             if track_num is not None:
                 track["track"] = str(track_num)
@@ -356,7 +409,6 @@ class VocaDB(MetadataFetcher):
             if disc_num is not None:
                 track["disk"] = str(disc_num)
 
-            # ALWAYS use the album cover art for every track
             if album_data:
                 track["picture"] = self._get_cover_url(album_data)
 
