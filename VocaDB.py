@@ -51,7 +51,7 @@ class VocaDB(MetadataFetcher):
         params["lang"] = lang
 
         try:
-            resp = self.session.get(url, params=params)
+            resp = self.session.get(url, params=params, timeout=20)
             resp.raise_for_status()
             return resp.json()
         except requests.exceptions.RequestException as e:
@@ -320,65 +320,66 @@ class VocaDB(MetadataFetcher):
     # ---------- Required Methods ----------
 
     def search_songs(self, query: str, limit: int = 5, include_coverart: Optional[bool] = None) -> List[Dict[str, Any]]:
-        if include_coverart is None:
-            include_coverart = self.FETCH_COVER
-        params = {
-            "query": query,
-            "limit": min(limit, 100),
-            "fields": "Artists,MainPicture"
-        }
-        data = self._get("songs", params)
-        results = []
-        for song in data.get("items", []):
-            entry = {
-                "id": song.get("id"),
-                "title": self._get_song_name(song),
+        try:
+            if include_coverart is None:
+                include_coverart = self.FETCH_COVER
+            params = {
+                "query": query,
+                "limit": min(limit, 100),
+                "fields": "Artists,MainPicture"
             }
-            artists = song.get("artists", [])
-            categorised = self._categorise_artists(artists)
-            artist_parts = categorised['main'] + categorised['vocalists']
-            if artist_parts:
-                entry["artist"] = "; ".join(artist_parts)
-            else:
-                entry["artist"] = song.get("artistString", "Unknown Artist")
+            data = self._get("songs", params)
+            results = []
+            for song in data.get("items", []):
+                entry = {
+                    "id": song.get("id"),
+                    "title": self._get_song_name(song),
+                }
+                artists = song.get("artists", [])
+                categorised = self._categorise_artists(artists)
+                artist_parts = categorised['main'] + categorised['vocalists']
+                if artist_parts:
+                    entry["artist"] = "; ".join(artist_parts)
+                else:
+                    entry["artist"] = song.get("artistString", "Unknown Artist")
 
-            if include_coverart:
-                entry["coverart"] = self._get_cover_url(song)
-            results.append(self._clean_dict(entry))
-        return results[:limit]
+                if include_coverart:
+                    entry["coverart"] = self._get_cover_url(song)
+                results.append(self._clean_dict(entry))
+            return results[:limit]
+        except Exception as e:
+            return []
 
     def search_albums(self, query: str, limit: int = 5, include_coverart: Optional[bool] = None) -> List[Dict[str, Any]]:
-        if include_coverart is None:
-            include_coverart = self.FETCH_COVER
-        params = {
-            "query": query,
-            "limit": min(limit, 100),
-            "fields": "Artists,MainPicture,ReleaseEvent"
-        }
-        data = self._get("albums", params)
-        results = []
-        for album in data.get("items", []):
-            entry = {
-                "id": album.get("id"),
-                "title": self._get_album_name(album),
-                "artist": self._get_album_main_artist(album)
+        try:
+            if include_coverart is None:
+                include_coverart = self.FETCH_COVER
+            params = {
+                "query": query,
+                "limit": min(limit, 100),
+                "fields": "Artists,MainPicture,ReleaseEvent"
             }
-            # Optionally include label in search results
-            label = self._get_album_label(album)
-            if label:
-                entry["label"] = label
-                entry["vocadb_label"] = label
+            data = self._get("albums", params)
+            results = []
+            for album in data.get("items", []):
+                entry = {
+                    "id": album.get("id"),
+                    "title": self._get_album_name(album),
+                    "artist": self._get_album_main_artist(album)
+                }
 
-            release_event = album.get("releaseEvent")
-            if release_event:
-                date_str = release_event.get("date")
-                if date_str:
-                    entry["year"] = self._format_date(date_str)
+                release_event = album.get("releaseEvent")
+                if release_event:
+                    date_str = release_event.get("date")
+                    if date_str:
+                        entry["year"] = self._format_date(date_str)
 
-            if include_coverart:
-                entry["coverart"] = self._get_cover_url(album)
-            results.append(self._clean_dict(entry))
-        return results[:limit]
+                if include_coverart:
+                    entry["coverart"] = self._get_cover_url(album)
+                results.append(self._clean_dict(entry))
+            return results[:limit]
+        except Exception as e:
+            return []
 
     def fetch_song_metadata(self, song_id: str, album_data: Dict = None) -> Dict[str, Any]:
         params = {
