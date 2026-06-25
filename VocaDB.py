@@ -1,6 +1,6 @@
 # VocaDB.py
 # Addon implementation using VocaDB API
-# v1.0.2
+# v1.0.3
 
 import os
 import requests
@@ -14,7 +14,7 @@ class VocaDB(MetadataFetcher):
     description = "Fetch song and album metadata from VocaDB"
 
     BASE_URL = "https://vocadb.net/api/"
-    USER_AGENT = "metadata-docker-vocadb-addon/1.0.2"
+    USER_AGENT = "metadata-docker-vocadb-addon/1.0.3"
 
     required_env_vars = ["MD_VOCADB_LANG", "MD_VOCADB_LYRICS_LANG", "MD_VOCADB_SONG_USE_ORIGINAL",
                         "MD_VOCADB_ARTIST_USE_ORIGINAL", "MD_VOCADB_ALBUM_USE_ORIGINAL", "MD_VOCADB_VOCALIST_USE_ORIGINAL",
@@ -184,20 +184,34 @@ class VocaDB(MetadataFetcher):
         if not lyrics_list:
             return None
 
-        # Map our language names to VocaDB translationType strings
+        # Map our language names to VocaDB translationType and culture filter
         lang_map = {
-            'English': 'Translation',
-            'Romaji': 'Romanized',
-            'Japanese': 'Original',
-            'Default': 'Original'
+            'English': ('Translation', 'en'),      # Translation with cultureCode containing 'en'
+            'Romaji': ('Romanized', None),         # Romanized (no culture filter needed)
+            'Japanese': ('Original', None),        # Original (Japanese)
+            'Default': ('Original', None)
         }
-        target_type = lang_map.get(self.LYRICS_LANG, 'Original')
+        target_type, target_culture = lang_map.get(self.LYRICS_LANG, ('Original', None))
 
-        # Try to find the target type
+        # Try to find the exact match
         for lyric in lyrics_list:
             if lyric.get('translationType') == target_type:
+                if target_culture is not None:
+                    cultures = lyric.get('cultureCodes', [])
+                    # Check if any culture code starts with the target (e.g., 'en' for English)
+                    if any(c.lower().startswith(target_culture) for c in cultures):
+                        return lyric.get('value')
+                else:
+                    # No culture filter needed (Romaji or Original)
+                    return lyric.get('value')
+
+        # Fallback: try Original, then Romanized, then any available
+        for lyric in lyrics_list:
+            if lyric.get('translationType') == 'Original':
                 return lyric.get('value')
-        # Fallback: return the first available lyrics (usually Original)
+        for lyric in lyrics_list:
+            if lyric.get('translationType') == 'Romanized':
+                return lyric.get('value')
         for lyric in lyrics_list:
             if lyric.get('value'):
                 return lyric.get('value')
