@@ -1,6 +1,6 @@
 # VocaDB.py
 # Addon implementation using VocaDB API
-# v1.0.3
+# v1.0.4
 
 import os
 import requests
@@ -14,7 +14,7 @@ class VocaDB(MetadataFetcher):
     description = "Fetch song and album metadata from VocaDB"
 
     BASE_URL = "https://vocadb.net/api/"
-    USER_AGENT = "metadata-docker-vocadb-addon/1.0.3"
+    USER_AGENT = "metadata-docker-vocadb-addon/1.0.4"
 
     required_env_vars = ["MD_VOCADB_LANG", "MD_VOCADB_LYRICS_LANG", "MD_VOCADB_SONG_USE_ORIGINAL",
                         "MD_VOCADB_ARTIST_USE_ORIGINAL", "MD_VOCADB_ALBUM_USE_ORIGINAL", "MD_VOCADB_VOCALIST_USE_ORIGINAL",
@@ -84,6 +84,12 @@ class VocaDB(MetadataFetcher):
 
     def _get_vocalist_name(self, artist_data: Dict) -> str:
         return self._get_name(artist_data, self.VOCALIST_USE_ORIGINAL)
+
+    def _get_album_description(self, album_data: Dict) -> Optional[str]:
+        desc = album_data.get('description')
+        if desc and desc.strip():
+            return desc
+        return None
 
     # ---------- Artist detection for albums ----------
     def _get_album_main_artist(self, album_data: Dict) -> str:
@@ -285,6 +291,10 @@ class VocaDB(MetadataFetcher):
             track["album"] = self._get_album_name(album_data)
             track['albumArtist'] = self._get_album_main_artist(album_data)
 
+            desc = self._get_album_description(album_data)
+            if desc:
+                track["description"] = desc
+
             # Extract label if present
             label = self._get_album_label(album_data)
             if label:
@@ -371,7 +381,7 @@ class VocaDB(MetadataFetcher):
             params = {
                 "query": query,
                 "limit": min(limit, 100),
-                "fields": "Artists,MainPicture,ReleaseEvent"
+                "fields": "Artists,MainPicture,ReleaseEvent,Description"
             }
             data = self._get("albums", params)
             results = []
@@ -381,6 +391,10 @@ class VocaDB(MetadataFetcher):
                     "title": self._get_album_name(album),
                     "artist": self._get_album_main_artist(album)
                 }
+
+                desc = self._get_album_description(album)
+                if desc:
+                    entry["description"] = desc
 
                 release_event = album.get("releaseEvent")
                 if release_event:
@@ -425,7 +439,7 @@ class VocaDB(MetadataFetcher):
         return self._clean_dict(track)
 
     def fetch_album_metadata(self, album_id: str) -> List[Dict[str, Any]]:
-        album_params = {"fields": "Artists,MainPicture,ReleaseEvent,Tags"}
+        album_params = {"fields": "Artists,MainPicture,ReleaseEvent,Tags,Description"}
         album_data = self._get(f"albums/{album_id}", album_params)
 
         try:
