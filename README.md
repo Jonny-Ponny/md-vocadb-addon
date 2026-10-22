@@ -2,7 +2,7 @@
 
 Addon for [metadata-docker](https://github.com/Jonny-Ponny/metadata-docker) that uses the [VocaDB](https://vocadb.net/) API to fetch song and album metadata from the VocaDB database, which specialises in Vocaloid/UTAU and related music.
 
-Current addon version: `1.1.0`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
+Current addon version: `1.1.1`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
 
 ## Addon structure
 
@@ -15,7 +15,7 @@ VocaDB supports multiple languages for names (song titles, artist names, album t
 | Variable | Purpose | Allowed Values | Default |
 |----------|---------|----------------|---------|
 | `MD_VOCADB_LANG` | Primary language for the API (`lang` parameter). Affects all `name` fields unless overridden by specific `*_USE_ORIGINAL` flags. | `Default`, `English`, `Romaji`, `Japanese` | `English` |
-| `MD_VOCADB_LYRICS_LANG` | Language for lyrics | `English`, `Romaji`, `Japanese`, `Default` | Value of `MD_VOCADB_LANG` |
+| `MD_VOCADB_LYRICS_LANG` | Language for lyrics. `Default` uses the song's original lyrics in their original language (Japanese, English, etc.), not a translation. Other values use lyrics in the configured language when available. | `English`, `Romaji`, `Japanese`, `Default` | Value of `MD_VOCADB_LANG` |
 | `MD_VOCADB_SONG_USE_ORIGINAL` | If `true`, use the original title for songs instead of the localized name from `MD_VOCADB_LANG`. | `true`/`false` | `false` |
 | `MD_VOCADB_ARTIST_USE_ORIGINAL` | If `true`, use original names for producers in the `artist` field and for `albumArtist`. | `true`/`false` | `false` |
 | `MD_VOCADB_ALBUM_USE_ORIGINAL` | If `true`, use the original name for albums instead of the localized name. | `true`/`false` | `false` |
@@ -49,13 +49,14 @@ VocaDB artist objects in song/album responses do not include `defaultName`. When
   - **Main artists** (`categories` contains `Producer`) - the primary creators.
   - **Vocalists** (`categories` contains `Vocalist`) - voicebanks and singers.
   - Other roles (Illustrator, Animator, Lyricist, etc.) are ignored and are not returned as metadata fields.
-- **Artist field language**: The combined `artist` field contains producers followed by vocalists. Producers follow `MD_VOCADB_ARTIST_USE_ORIGINAL`; vocalists follow `MD_VOCADB_VOCALIST_USE_ORIGINAL`. This allows each part to use a different language.
+- **Artist field language**: The combined `artist` field contains producers followed by vocalists. Producers follow `MD_VOCADB_ARTIST_USE_ORIGINAL`; vocalists follow `MD_VOCADB_VOCALIST_USE_ORIGINAL`. This allows each part to use a different language. If no categorised artists are available, the `artistString` from the corresponding language response is used as a fallback.
 - **Vocalists field**: The separate `vocalists` field follows `MD_VOCADB_VOCALIST_USE_ORIGINAL`, matching the vocalist part of the `artist` field.
 - **Cover art**: Uses the `urlOriginal` (largest) image from VocaDB, falling back to `urlThumb`.
 - **Genres**: Only tags with category `Genre`/`Genres` are returned in the `genre` field.
 - **Date**: Album release dates and song publish dates are returned as `date` in `YYYY-MM-DD` format when available.
 - **Track/disc numbers**: Returned as `trackNumber` and `diskNumber`.
 - **Publisher**: Taken from the album's label artist, falling back to the album's `labels` list when present.
+- **Lyrics language**: `Default` returns the original lyrics (whatever language the song was originally written in). Other values prefer an original or translation in that language, then fall back to the original, romanized, or any available lyrics. Remasters, remixes, and covers also inherit lyrics from the version they are based on; song-specific lyrics take priority over inherited ones.
 - **Release type**: Taken from VocaDB's `discType` field (Album, Single, EP, Compilation, etc.).
 
 ## Metadata Fields

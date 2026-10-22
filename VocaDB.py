@@ -25,7 +25,7 @@ class VocaDB(MetadataFetcher):
     name = "VocaDB"
     id = "vocadb"
     description = "Fetch song and album metadata from VocaDB"
-    version = "1.1.0"
+    version = "1.1.1"
     github = "https://github.com/Jonny-Ponny/md-vocadb-addon"
 
     BASE_URL = "https://vocadb.net/api/"
@@ -48,6 +48,19 @@ class VocaDB(MetadataFetcher):
     # All have defaults
     LANG = os.getenv("MD_VOCADB_LANG", "English")
     LYRICS_LANG = os.getenv("MD_VOCADB_LYRICS_LANG", LANG)
+    # Map lyric language names to VocaDB culture codes for language matching.
+    LYRICS_CULTURE_CODES = {
+        "english": "en",
+        "japanese": "ja",
+        "korean": "ko",
+        "chinese": "zh",
+        "spanish": "es",
+        "french": "fr",
+        "german": "de",
+        "italian": "it",
+        "russian": "ru",
+        "portuguese": "pt",
+    }
     SONG_USE_ORIGINAL = _env_flag("MD_VOCADB_SONG_USE_ORIGINAL")
     ARTIST_USE_ORIGINAL = _env_flag("MD_VOCADB_ARTIST_USE_ORIGINAL")
     ALBUM_USE_ORIGINAL = _env_flag("MD_VOCADB_ALBUM_USE_ORIGINAL")
@@ -125,6 +138,27 @@ class VocaDB(MetadataFetcher):
     def _get_vocalist_name(self, artist_data: Dict) -> str:
         return self._get_name(artist_data, self.VOCALIST_USE_ORIGINAL)
 
+    def _get_artist_string_fallback(
+        self, entity: Dict, use_original: Optional[bool] = None
+    ) -> str:
+        """Return the artistString fallback, honoring the original-name flags.
+
+        The localized response and the lang=Default response both contain an
+        artistString. Prefer the default one when original names were requested
+        so a missing/uncategorised artist list does not silently fall back to
+        the localized string.
+        """
+        if use_original is None:
+            use_original = self.ARTIST_USE_ORIGINAL or self.VOCALIST_USE_ORIGINAL
+        if use_original:
+            default_artist_string = entity.get("defaultArtistString")
+            if isinstance(default_artist_string, str) and default_artist_string.strip():
+                return default_artist_string
+        artist_string = entity.get("artistString")
+        if isinstance(artist_string, str) and artist_string.strip():
+            return artist_string
+        return "Unknown Artist"
+
     def _get_album_description(self, album_data: Dict) -> Optional[str]:
         desc = album_data.get("description")
         if isinstance(desc, str) and desc.strip():
@@ -164,8 +198,10 @@ class VocaDB(MetadataFetcher):
         if artist_obj:
             return self._get_artist_name(artist_obj)
 
-        artist_string = album_data.get("artistString")
-        if isinstance(artist_string, str) and artist_string.strip():
+        artist_string = self._get_artist_string_fallback(
+            album_data, use_original=self.ARTIST_USE_ORIGINAL
+        )
+        if artist_string != "Unknown Artist":
             return artist_string
 
         if artists:
@@ -217,12 +253,16 @@ class VocaDB(MetadataFetcher):
 
     # ---------- Original artist names ----------
     def _needs_original_artist_names(self) -> bool:
+        # With lang=Default the regular "name" field already contains the
+        # original name, so there is nothing extra to fetch.
+        if str(self.LANG).strip().lower() == "default":
+            return False
         return self.ARTIST_USE_ORIGINAL or self.VOCALIST_USE_ORIGINAL
 
     @staticmethod
     def _collect_artist_names(data: Any) -> Dict[str, Dict[Any, str]]:
         if not isinstance(data, dict):
-            return {"entries": {}, "artists": {}}
+            return {"entries": {}, "artists": {}, "artistStrings": {}}
 
         items = data.get("items")
         if not isinstance(items, list):
@@ -230,9 +270,19 @@ class VocaDB(MetadataFetcher):
 
         entry_names = {}
         artist_names = {}
+        artist_strings = {}
         for item in items:
             if not isinstance(item, dict):
                 continue
+            item_id = item.get("id")
+            artist_string = item.get("artistString")
+            if (
+                item_id is not None
+                and isinstance(artist_string, str)
+                and artist_string.strip()
+            ):
+                artist_strings[item_id] = artist_string
+
             for entry in item.get("artists") or []:
                 entry_id = entry.get("id")
                 entry_name = entry.get("name")
@@ -245,12 +295,16 @@ class VocaDB(MetadataFetcher):
                 if artist_id is not None and isinstance(artist_name, str) and artist_name:
                     artist_names[artist_id] = artist_name
 
-        return {"entries": entry_names, "artists": artist_names}
+        return {
+            "entries": entry_names,
+            "artists": artist_names,
+            "artistStrings": artist_strings,
+        }
 
     def _fetch_original_artist_names(
         self, endpoint: str, params: Dict[str, Any]
     ) -> Dict[str, Dict[Any, str]]:
-        """Fetch artist names with lang=Default.
+        """Fetch artist names and artistString with lang=Default.
 
         VocaDB's artist contracts do not include defaultName, so the localized
         response is not enough to honor the *_USE_ORIGINAL settings.
@@ -258,7 +312,7 @@ class VocaDB(MetadataFetcher):
         try:
             data = self._get(endpoint, params, lang_override="Default")
         except Exception:
-            return {"entries": {}, "artists": {}}
+            return {"entries": {}, "artists": {}, "artistStrings": {}}
         return self._collect_artist_names(data)
 
     @staticmethod
@@ -280,10 +334,25 @@ class VocaDB(MetadataFetcher):
                     artist["defaultName"] = original
 
     @classmethod
+    def _apply_original_item_artist_names(
+        cls, item: Dict, original_names: Dict[str, Dict[Any, str]]
+    ) -> None:
+        """Apply default artist names and artistString to a song/album item."""
+        if not isinstance(item, dict):
+            return
+        cls._apply_original_artist_names(item.get("artists"), original_names)
+
+        original_artist_string = original_names.get("artistStrings", {}).get(
+            item.get("id")
+        )
+        if original_artist_string:
+            item["defaultArtistString"] = original_artist_string
+
+    @classmethod
     def _apply_original_album_artist_names(
         cls, album_data: Dict, original_names: Dict[str, Dict[Any, str]]
     ) -> None:
-        cls._apply_original_artist_names(album_data.get("artists"), original_names)
+        cls._apply_original_item_artist_names(album_data, original_names)
         artist = album_data.get("artist")
         if isinstance(artist, dict):
             original = original_names.get("artists", {}).get(artist.get("id"))
@@ -291,43 +360,140 @@ class VocaDB(MetadataFetcher):
                 artist["defaultName"] = original
 
     # ---------- Lyrics ----------
+    @staticmethod
+    def _lyric_value(lyric: Dict) -> Optional[str]:
+        if not isinstance(lyric, dict):
+            return None
+        value = lyric.get("value")
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    @staticmethod
+    def _lyric_matches_culture(lyric: Dict, culture_code: str) -> bool:
+        cultures = lyric.get("cultureCodes") or []
+        return any(
+            isinstance(culture, str)
+            and culture.lower().startswith(culture_code)
+            for culture in cultures
+        )
+
+    @classmethod
+    def _find_lyric(
+        cls,
+        lyrics_list: List[Dict],
+        translation_type: str,
+        culture_code: Optional[str] = None,
+    ) -> Optional[str]:
+        for lyric in lyrics_list:
+            if not isinstance(lyric, dict):
+                continue
+            if lyric.get("translationType") != translation_type:
+                continue
+            value = cls._lyric_value(lyric)
+            if not value:
+                continue
+            if culture_code is not None and not cls._lyric_matches_culture(
+                lyric, culture_code
+            ):
+                continue
+            return value
+        return None
+
     def _extract_lyrics(self, lyrics_list: List[Dict]) -> Optional[str]:
         if not lyrics_list:
             return None
 
-        # Map our language names to VocaDB translationType and culture filter
-        lang_map = {
-            "English": ("Translation", "en"),
-            "Romaji": ("Romanized", None),
-            "Japanese": ("Original", None),
-            "Default": ("Original", None),
-        }
-        target_type, target_culture = lang_map.get(
-            self.LYRICS_LANG, ("Original", None)
-        )
+        lyrics_lang = (self.LYRICS_LANG or "Default").strip()
+        normalized_lang = lyrics_lang.lower()
+
+        # "Default" means the song's original lyrics, whatever language the
+        # original happens to be in (Japanese, English, etc.).
+        if normalized_lang in ("default", "original", ""):
+            value = self._find_lyric(lyrics_list, "Original")
+            if value:
+                return value
+            value = self._find_lyric(lyrics_list, "Romanized")
+            if value:
+                return value
+
+        # Romaji/romanized lyrics are not tied to a culture code.
+        elif normalized_lang in ("romaji", "romanized"):
+            value = self._find_lyric(lyrics_list, "Romanized")
+            if value:
+                return value
+            value = self._find_lyric(lyrics_list, "Original")
+            if value:
+                return value
+
+        else:
+            # Map the configured language to a VocaDB culture code.
+            culture_code = self.LYRICS_CULTURE_CODES.get(normalized_lang)
+            if culture_code is not None:
+                # Prefer an original whose language already matches the
+                # request (e.g. an English-original song), then a translation.
+                for translation_type in ("Original", "Translation"):
+                    value = self._find_lyric(
+                        lyrics_list, translation_type, culture_code
+                    )
+                    if value:
+                        return value
+
+            # Requested language unavailable: fall back to the original,
+            # then romanized, then any available lyrics.
+            value = self._find_lyric(lyrics_list, "Original")
+            if value:
+                return value
+            value = self._find_lyric(lyrics_list, "Romanized")
+            if value:
+                return value
 
         for lyric in lyrics_list:
-            if lyric.get("translationType") != target_type:
-                continue
-            if target_culture is not None:
-                cultures = lyric.get("cultureCodes") or []
-                if any(
-                    isinstance(c, str) and c.lower().startswith(target_culture)
-                    for c in cultures
-                ):
-                    return lyric.get("value")
-            else:
-                return lyric.get("value")
-
-        # Fallback: Original, then Romanized, then anything available.
-        for translation_type in ("Original", "Romanized"):
-            for lyric in lyrics_list:
-                if lyric.get("translationType") == translation_type:
-                    return lyric.get("value")
-        for lyric in lyrics_list:
-            if lyric.get("value"):
-                return lyric.get("value")
+            value = self._lyric_value(lyric)
+            if value:
+                return value
         return None
+
+    def _collect_song_lyrics(self, song_data: Dict) -> List[Dict]:
+        """Collect the song's own lyrics and those inherited from its parents.
+
+        VocaDB exposes these as ``lyricsFromParents``: remasters, remixes and
+        covers inherit lyrics from the version they are based on. Own entries
+        are kept first so song-specific lyrics win over inherited ones.
+        """
+        lyrics = []
+        seen_ids = set()
+
+        def add_lyrics(items: Any) -> None:
+            if not isinstance(items, list):
+                return
+            for lyric in items:
+                if not isinstance(lyric, dict):
+                    continue
+                lyric_id = lyric.get("id")
+                if lyric_id is not None:
+                    if lyric_id in seen_ids:
+                        continue
+                    seen_ids.add(lyric_id)
+                lyrics.append(lyric)
+
+        add_lyrics(song_data.get("lyrics"))
+
+        original_id = song_data.get("originalVersionId")
+        visited = {song_data.get("id")}
+        while original_id is not None and original_id not in visited:
+            visited.add(original_id)
+            try:
+                original_data = self._get(
+                    f"songs/{original_id}", {"fields": "Lyrics"}
+                )
+            except Exception:
+                break
+
+            add_lyrics(original_data.get("lyrics"))
+            original_id = original_data.get("originalVersionId")
+
+        return lyrics
 
     # ---------- Other helpers ----------
     @staticmethod
@@ -435,7 +601,7 @@ class VocaDB(MetadataFetcher):
 
         artists = song_data.get("artists", [])
         track["artist"] = self._build_artist_string(
-            artists, song_data.get("artistString", "Unknown Artist")
+            artists, self._get_artist_string_fallback(song_data)
         )
 
         categorised = self._categorise_artists(artists)
@@ -584,13 +750,13 @@ class VocaDB(MetadataFetcher):
             results = []
             for song in data.get("items", []):
                 artists = song.get("artists", [])
-                self._apply_original_artist_names(artists, original_names)
+                self._apply_original_item_artist_names(song, original_names)
 
                 entry = {
                     "id": song.get("id"),
                     "title": self._get_song_name(song),
                     "artist": self._build_artist_string(
-                        artists, song.get("artistString", "Unknown Artist")
+                        artists, self._get_artist_string_fallback(song)
                     ),
                 }
 
@@ -641,7 +807,7 @@ class VocaDB(MetadataFetcher):
             results = []
             for album in data.get("items", []):
                 artists = album.get("artists", [])
-                self._apply_original_artist_names(artists, original_names)
+                self._apply_original_album_artist_names(album, original_names)
 
                 entry = {
                     "id": album.get("id"),
@@ -692,19 +858,12 @@ class VocaDB(MetadataFetcher):
             original_names = self._fetch_original_artist_names(
                 f"songs/{song_id}", {"fields": "Artists"}
             )
-            self._apply_original_artist_names(data.get("artists"), original_names)
+            self._apply_original_item_artist_names(data, original_names)
 
-        if self.LYRICS_LANG != self.LANG:
-            try:
-                lyrics_data = self._get(
-                    f"songs/{song_id}",
-                    {"fields": "Lyrics"},
-                    lang_override=self.LYRICS_LANG,
-                )
-                if "lyrics" in lyrics_data:
-                    data["lyrics"] = lyrics_data["lyrics"]
-            except Exception:
-                pass
+        # Lyrics are not localized by the API's lang parameter, so fetch the
+        # full set once and merge in lyrics inherited from parent versions.
+        if isinstance(data.get("lyrics", []), list):
+            data["lyrics"] = self._collect_song_lyrics(data)
 
         if album_data is None and data.get("albums"):
             selected_album = self._select_song_album(data["albums"], data)
