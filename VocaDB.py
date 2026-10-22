@@ -25,7 +25,7 @@ class VocaDB(MetadataFetcher):
     name = "VocaDB"
     id = "vocadb"
     description = "Fetch song and album metadata from VocaDB"
-    version = "1.1.1"
+    version = "1.1.2"
     github = "https://github.com/Jonny-Ponny/md-vocadb-addon"
 
     BASE_URL = "https://vocadb.net/api/"
@@ -735,7 +735,7 @@ class VocaDB(MetadataFetcher):
             limit = self._clamp_limit(limit)
             params = {
                 "query": query,
-                "limit": limit,
+                "maxResults": limit,
                 "fields": "Artists,MainPicture",
             }
             data = self._get("songs", params)
@@ -744,7 +744,7 @@ class VocaDB(MetadataFetcher):
             if self._needs_original_artist_names():
                 original_names = self._fetch_original_artist_names(
                     "songs",
-                    {"query": query, "limit": limit, "fields": "Artists"},
+                    {"query": query, "maxResults": limit, "fields": "Artists"},
                 )
 
             results = []
@@ -792,7 +792,7 @@ class VocaDB(MetadataFetcher):
             limit = self._clamp_limit(limit)
             params = {
                 "query": query,
-                "limit": limit,
+                "maxResults": limit,
                 "fields": "Artists,MainPicture,Description",
             }
             data = self._get("albums", params)
@@ -801,7 +801,7 @@ class VocaDB(MetadataFetcher):
             if self._needs_original_artist_names():
                 original_names = self._fetch_original_artist_names(
                     "albums",
-                    {"query": query, "limit": limit, "fields": "Artists"},
+                    {"query": query, "maxResults": limit, "fields": "Artists"},
                 )
 
             results = []

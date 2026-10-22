@@ -2,7 +2,7 @@
 
 Addon for [metadata-docker](https://github.com/Jonny-Ponny/metadata-docker) that uses the [VocaDB](https://vocadb.net/) API to fetch song and album metadata from the VocaDB database, which specialises in Vocaloid/UTAU and related music.
 
-Current addon version: `1.1.1`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
+Current addon version: `1.1.2`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
 
 ## Addon structure
 
