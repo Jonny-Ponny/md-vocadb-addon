@@ -25,7 +25,7 @@ class VocaDB(MetadataFetcher):
     name = "VocaDB"
     id = "vocadb"
     description = "Fetch song and album metadata from VocaDB"
-    version = "1.1.2"
+    version = "1.1.3"
     github = "https://github.com/Jonny-Ponny/md-vocadb-addon"
 
     BASE_URL = "https://vocadb.net/api/"
@@ -627,6 +627,12 @@ class VocaDB(MetadataFetcher):
                     publisher = labels[0].get("name")
             if publisher:
                 track["publisher"] = publisher
+
+            catalog_number = album_data.get("catalogNumber")
+            if isinstance(catalog_number, str) and catalog_number.strip():
+                # Not a standard metadata-docker field, so the app writes it
+                # as a custom tag: TXXX:CatalogNumber, CATALOGNUMBER, etc.
+                track["CatalogNumber"] = catalog_number.strip()
 
             date_str = self._get_album_date(album_data)
             if date_str:

@@ -2,7 +2,7 @@
 
 Addon for [metadata-docker](https://github.com/Jonny-Ponny/metadata-docker) that uses the [VocaDB](https://vocadb.net/) API to fetch song and album metadata from the VocaDB database, which specialises in Vocaloid/UTAU and related music.
 
-Current addon version: `1.1.2`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
+Current addon version: `1.1.3`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
 
 ## Addon structure
 
@@ -56,6 +56,7 @@ VocaDB artist objects in song/album responses do not include `defaultName`. When
 - **Date**: Album release dates and song publish dates are returned as `date` in `YYYY-MM-DD` format when available.
 - **Track/disc numbers**: Returned as `trackNumber` and `diskNumber`.
 - **Publisher**: Taken from the album's label artist, falling back to the album's `labels` list when present.
+- **Catalog number**: Taken from the album's `catalogNumber` field. It is also shown in album search results.
 - **Lyrics language**: `Default` returns the original lyrics (whatever language the song was originally written in). Other values prefer an original or translation in that language, then fall back to the original, romanized, or any available lyrics. Remasters, remixes, and covers also inherit lyrics from the version they are based on; song-specific lyrics take priority over inherited ones.
 - **Release type**: Taken from VocaDB's `discType` field (Album, Single, EP, Compilation, etc.).
 
@@ -76,12 +77,13 @@ The addon returns a flat dictionary (or list of dictionaries) that includes the 
 - `diskNumber` - disc number (for multi-disc albums)
 - `publisher` - label/record company
 - `releaseType` - album type (e.g. Album, EP, Single)
+- `CatalogNumber` - album catalog number, written as a custom tag (`TXXX:CatalogNumber` for ID3, `CatalogNumber` for Vorbis comments/FLAC, `----:com.apple.iTunes:CatalogNumber` for MP4)
 - `description` - album description
 - `unsyncedLyrics` - lyrics in the configured lyrics language
 - `extraInfo` - display-only duration and song type; never written as a tag
 - `coverart` - cover art URL for search results only
 
-VocaDB identifiers are returned as `vocadb_song_id` and `vocadb_album_id`. These identifiers and the `vocalists` field are addon-specific keys, so metadata-docker writes them as custom tags if they are selected. Role-based fields such as `vocadb_illustrator`, `vocadb_animator`, and `vocadb_lyricist` are no longer emitted.
+VocaDB identifiers are returned as `vocadb_song_id` and `vocadb_album_id`. These identifiers, the `vocalists` field and `CatalogNumber` are addon-specific keys, so metadata-docker writes them as custom tags if they are selected. Role-based fields such as `vocadb_illustrator`, `vocadb_animator`, and `vocadb_lyricist` are no longer emitted.
 
 ## Using This Addon
 
