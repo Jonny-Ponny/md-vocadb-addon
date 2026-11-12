@@ -2,7 +2,7 @@
 
 Addon for [metadata-docker](https://github.com/Jonny-Ponny/metadata-docker) that uses the [VocaDB](https://vocadb.net/) API to fetch song and album metadata from the VocaDB database, which specialises in Vocaloid/UTAU and related music.
 
-Current addon version: `1.1.3`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
+Current addon version: `1.1.4`. Source: [md-vocadb-addon](https://github.com/Jonny-Ponny/md-vocadb-addon).
 
 ## Addon structure
 
@@ -59,6 +59,7 @@ VocaDB artist objects in song/album responses do not include `defaultName`. When
 - **Catalog number**: Taken from the album's `catalogNumber` field. It is also shown in album search results.
 - **Lyrics language**: `Default` returns the original lyrics (whatever language the song was originally written in). Other values prefer an original or translation in that language, then fall back to the original, romanized, or any available lyrics. Remasters, remixes, and covers also inherit lyrics from the version they are based on; song-specific lyrics take priority over inherited ones.
 - **Release type**: Taken from VocaDB's `discType` field (Album, Single, EP, Compilation, etc.).
+- **Album artist**: The album's Producer, falling back to its `artistString`. Compilation albums (`discType` = `Compilation`) and multi-artist releases whose `artistString` is "Various artists" are credited to `Various Artists` instead of one of the credited artists.
 
 ## Metadata Fields
 
@@ -69,7 +70,7 @@ The addon returns a flat dictionary (or list of dictionaries) that includes the 
 - `artist` - producers and vocalists, separated by `; `; producers and vocalists each follow their own language flag
 - `vocalists` - vocalists as a separate field, using the vocalist language flag
 - `album` - song album
-- `albumArtist` - the main artist (Producer) of the album
+- `albumArtist` - the main artist (Producer) of the album, or `Various Artists` for compilations
 - `date` - release/publish date
 - `genre` - music genres (semicolon-separated)
 - `picture` - cover art URL (original resolution)

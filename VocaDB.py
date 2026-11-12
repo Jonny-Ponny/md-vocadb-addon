@@ -25,7 +25,7 @@ class VocaDB(MetadataFetcher):
     name = "VocaDB"
     id = "vocadb"
     description = "Fetch song and album metadata from VocaDB"
-    version = "1.1.3"
+    version = "1.1.4"
     github = "https://github.com/Jonny-Ponny/md-vocadb-addon"
 
     BASE_URL = "https://vocadb.net/api/"
@@ -187,8 +187,40 @@ class VocaDB(MetadataFetcher):
 
         return {value.lower() for value in values if value}
 
+    @staticmethod
+    def _is_various_artists_album(album_data: Dict) -> bool:
+        """Return True for compilations and other multi-artist releases.
+
+        VocaDB flags compilations with ``discType == "Compilation"``, but some
+        multi-artist releases are stored as regular albums and only reveal
+        themselves through an ``artistString`` of "Various artists".
+        """
+        if not isinstance(album_data, dict):
+            return False
+
+        disc_type = album_data.get("discType") or album_data.get("releaseType")
+        if isinstance(disc_type, str) and disc_type.strip().lower() == "compilation":
+            return True
+
+        for key in ("artistString", "defaultArtistString"):
+            value = album_data.get(key)
+            if isinstance(value, str) and value.strip().lower() in (
+                "various artists",
+                "various artist",
+            ):
+                return True
+
+        return False
+
     def _get_album_main_artist(self, album_data: Dict) -> str:
-        """Return the Producer (or first artist) as the main artist."""
+        """Return the Producer (or first artist) as the main artist.
+
+        Compilation albums are credited to "Various Artists" instead of one of
+        the many producers on the release.
+        """
+        if self._is_various_artists_album(album_data):
+            return "Various Artists"
+
         artists = album_data.get("artists") or []
         for art in artists:
             if "producer" in self._get_categories(art):
